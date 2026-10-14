@@ -30,7 +30,7 @@ def headers(locale="en"):
             "Accept": "application/json", "Accept-Encoding": "gzip"}
 H = headers()
 
-def get(url, rate=4.0, retries=3):
+def get(url, rate=6.0, retries=3):
     """(status, bytes). Rate-limited, retries on 429/5xx."""
     for i in range(retries):
         with _lock:
@@ -108,31 +108,39 @@ def add(index, count):
     s["ids"] += take; save(s)
     print(f"add: sitemap me {len(found)} ids, naye {len(new)}, add kiye {len(take)}, total {len(s['ids'])}")
 
-def refresh():
-    s = load(); ids = [i for i in s["ids"] if i not in set(s["gone"])]
+def refresh(only_new=False):
+    s = load(); gone = set(s["gone"]); ids = [i for i in s["ids"] if i not in gone]
     if not ids: sys.exit("data/ids.json khali hai. Pehle --seed ya --add chalao.")
+    old = {}
+    if only_new and os.path.exists(OUT):                  # purana (cached) data reuse, sirf naye ids fetch
+        try: old = {a["app_id"]: a for a in json.load(open(OUT, encoding="utf-8"))["apps"]}
+        except Exception: old = {}
+    todo = [i for i in ids if i not in old]; done = [0]
+    print(f"fetch: {len(todo)} apps (cached: {len(ids) - len(todo)})", flush=True)
     def one(aid):
-        st, d = info(aid)
+        st, d = info(aid); done[0] += 1
+        if done[0] % 50 == 0: print(f"  {done[0]}/{len(todo)}", flush=True)
         return aid, (extract(aid, d) if st == 200 and d and d.get("info") else None), st
-    with ThreadPoolExecutor(max_workers=6) as ex: res = list(ex.map(one, ids))
-    ok = [r[1] for r in res if r[1]]; dead = [r[0] for r in res if r[1] is None and r[2] == 500]
-    print(f"refresh: {len(ok)}/{len(ids)} ok, {len(dead)} dead(500), {len(ids) - len(ok) - len(dead)} failed")
+    with ThreadPoolExecutor(max_workers=16) as ex: res = list(ex.map(one, todo))
+    ok = {r[0]: r[1] for r in res if r[1]}; dead = [r[0] for r in res if r[1] is None and r[2] == 500]
+    print(f"refresh: {len(ok)}/{len(todo)} ok, {len(dead)} dead(500), {len(todo) - len(ok) - len(dead)} failed")
     if dead and not any(info(c)[0] == 200 for c in CANARY):   # canary fail = server block, apps dead nahi
         sys.exit("Canary check fail: server block/down lagta hai. Site update nahi ki.")
-    if not ok or len(ok) < 0.8 * (len(ids) - len(dead)):      # bahut kam apps -> deploy mat karo
+    if len(ok) + len(old) == 0 or len(ok) < 0.8 * (len(todo) - len(dead)):
         sys.exit("Bahut kam apps mile (<80%). Shayad block/rate-limit. Site update nahi ki.")
     if dead: s["gone"] = sorted(set(s["gone"]) | set(dead)); save(s)
+    by = {**old, **ok}; apps = [by[i] for i in ids if i in by]
     os.makedirs("data", exist_ok=True)
-    json.dump({"generated_at": datetime.now().astimezone().isoformat(timespec="seconds"), "count": len(ok), "apps": ok},
+    json.dump({"generated_at": datetime.now().astimezone().isoformat(timespec="seconds"), "count": len(apps), "apps": apps},
               open(OUT + ".tmp", "w", encoding="utf-8"), ensure_ascii=False)
-    os.replace(OUT + ".tmp", OUT); print("saved", OUT)
+    os.replace(OUT + ".tmp", OUT); print("saved", OUT, len(apps))
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("--seed"); p.add_argument("--add", action="store_true"); p.add_argument("--refresh", action="store_true")
-    p.add_argument("--index"); p.add_argument("--count"); a = p.parse_args()
+    p.add_argument("--only-new", action="store_true"); p.add_argument("--index"); p.add_argument("--count"); a = p.parse_args()
     if a.seed: seed(a.seed)
     elif a.add:
         add(a.index or input("Sitemap (number ya naam jaise 'apps'): ").strip(), a.count or input("Kitne naye apps (number/all): ").strip())
-    elif a.refresh: refresh()
+    elif a.refresh: refresh(a.only_new)
     else: p.print_help()
