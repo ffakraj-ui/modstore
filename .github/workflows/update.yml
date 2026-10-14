@@ -24,7 +24,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Fetch fresh app data (new download tokens)
+      - name: Restore cached app data
+        uses: actions/cache@v4
+        with:
+          path: data/apps.json
+          key: apps-${{ github.run_id }}
+          restore-keys: apps-
+      - name: Fetch app data (sab apps, fresh download tokens)
         run: python3 appteka_fetch.py --refresh
       - name: Build site
         run: |
