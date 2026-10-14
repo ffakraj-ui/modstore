@@ -1,0 +1,52 @@
+name: Add new apps (manual)
+on:
+  workflow_dispatch:
+    inputs:
+      index:
+        description: "Sitemap ka number ya naam (jaise: apps)"
+        default: "apps"
+      count:
+        description: "Kitne naye apps add karne hain (number ya all)"
+        default: "200"
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: false
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Add new app ids from sitemap
+        env:
+          INDEX: ${{ inputs.index }}
+          COUNT: ${{ inputs.count }}
+        run: python3 appteka_fetch.py --add --index "$INDEX" --count "$COUNT"
+      - name: Save ids.json
+        run: |
+          git config user.name "modstore-bot"; git config user.email "bot@users.noreply.github.com"
+          git add data/ids.json
+          git diff --cached --quiet || (git commit -m "Add new apps" && git push)
+      - name: Fetch fresh app data (new download tokens)
+        run: python3 appteka_fetch.py --refresh
+      - name: Build site
+        run: |
+          SITE_URL="${{ vars.SITE_URL }}"
+          if [ -z "$SITE_URL" ]; then SITE_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}"; fi
+          python3 build.py --domain "$SITE_URL"
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deployment
+        uses: actions/deploy-pages@v4
+        
