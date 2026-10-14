@@ -1,0 +1,5 @@
+site/
+data/apps.json
+data/apps.json.tmp
+__pycache__/
+.DS_Store
